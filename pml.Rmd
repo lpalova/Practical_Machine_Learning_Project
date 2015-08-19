@@ -1,0 +1,217 @@
+---
+title: 'Practical Machine Learning: Human Activity Recognition'
+author: "L.P."
+date: "08/18/2015"
+---
+
+## Loading and Preprocessing the Data
+
+**1. Libraries and Setup**  
+We use the *caret* library. We test the decission tree (*rpart* library) and random forest (*randomForest* library) models.
+We set the seed to a specific value so that our results are reproducible.
+```{r, message=FALSE}
+library(caret)
+library(rpart)
+library(randomForest)
+set.seed(12345)
+```
+
+**2. Loading the Human Activity Recognition Data**  
+We load the Human Activity Recognition data and store the result in a data frame $pmlDF$;
+the data are publicly available on the following website:
+*http://groupware.les.inf.puc-rio.br/har*.
+We preprocess the data: 
+(i) We set the missing or $#DIV/0!$ values to $NA$,
+(ii) we change the *cvtd_timestamp* variable to a time variable,
+(iii) we calculate the percentage of NAs in each variable (column in $pmlDF$) and
+disregard those variables whose percentage of NAs is more than 50.
+If there are more than 50% missing values in a variable, 
+imputing the data would not be meaningful.
+*Appendix A* shows that there are more than $98$ percent of missing values
+in the disregarded variables.
+We also leave out the first column, variable *X*, that labels rows in the dataset.
+```{r}
+pmlDF <- read.csv("./pml-training.csv", na.strings=c("", "NA", "#DIV/0!"))
+pmlDF$cvtd_timestamp <- as.POSIXct(strptime( pmlDF$cvtd_timestamp, "%m/%d/%Y %H:%M"))
+percent_NAs <- apply( pmlDF, 2, function(x) sum(is.na(x))/dim(pmlDF)[1] )
+pmlDF_select <- subset( pmlDF, select = -c( which(percent_NAs > 0.50), X ) )
+```
+
+**3. Creating Training and Testing Data Sets**  
+We partition the data by the variable *classe* into a training and a testing data set. 
+$60\%$ of the data goes into a training set and the remaining $40\%$ create a test set.
+```{r}
+inTrain = createDataPartition( pmlDF_select$classe, p=0.6, list=FALSE)
+training = pmlDF_select[ inTrain, ]
+testing = pmlDF_select[ -inTrain, ]
+```
+
+**4. Plotting Selected Predictors**   
+We print the names of all variables in the training set:
+```{r}
+names( training )
+```
+There are $52$ variables that are directly related to the accelerometers on the belt, forearm, arm and dumbbell,
+$13$ variables for each sensor,
+and the remaining $7$ variables are:
+name of the person performing the test (*user_name*), 
+one correct (A) and four incorrect (B,C,D or E) ways in which the test, barbell lifts, is performed (*classe*),
+three time variables, 
+two related to a raw timestamp (*raw_timestamp_part_1/2*) and one related to the time the test is performed
+(*cvtd_timestamp*), a factor variable *new_window* assigning values *yes* or *no* for every new window/measurement
+and the number of the time window slot (*num_window*) for each observation.
+We select the latter $7$ variables and create a *pairs* plot.
+We observe that there is very little or no correlation between the *classe* and the remaining $6$ variables;
+selected correlations are shown in *Appendix B*.
+```{r}
+small_pml <- subset( training, 
+                     select = c(user_name, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp,
+                                new_window, num_window, classe)
+                     )
+pairs( small_pml )
+```
+
+We therefore further subset the data and choose only the accelerometer-related variables 
+and the variable *classe* for our machine learning model study.
+This approach leaves $53$ variables in the training/testing data sets.
+The training and testing sets have `r signif(dim(training)[1],5)` and `r round(dim(testing)[1])` observations, respectively.
+```{r}
+training <- subset( training, 
+                    select = -c(user_name, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp, 
+                                new_window, num_window) )
+testing <- subset( testing, 
+                   select = -c(user_name, raw_timestamp_part_1, raw_timestamp_part_2, cvtd_timestamp, 
+                               new_window, num_window) )
+```
+We check that that there are no missing values in our training and testing sets:
+```{r}
+sum(is.na(training)); sum(is.na(testing))
+```
+Because there are no missing values, no imputing algorithm is needed and we proceed to building a machine learning model.
+
+\newline
+
+## Building a Machine Learning Algorithm
+
+**1. Test Model - Decision Tree**
+
+We test a decision tree model on our data. We try the model with and without preprocessing with
+principal components analysis (PCA). Our results are shown in *Appendix C*. 
+PCA needed $25$ components to capture $95$ percent of the variance.   
+We observe that the accuracy of both models is very low, about
+$0.37$ and $0.51$ with and without preprocessing with PCA, respectively.
+We also observe that this prediction model predicts only a subset of the possible *classe* outcomes:
+$A, D, E$ and $A, E$ with and without preprocessing with PCA, respectively.
+We therefore decide to proceed with a different model, a random forest model, 
+that employs a larger number of trees.
+
+**2. Final Model - Random Forest**
+
+We employ the random forest algorithm, *rf*, on our training and testing data sets. 
+First, we train the model on our training set.
+We explore the dependence of the accuracy of the random forest algorithm on 
+the number of trees grown, *ntree*.
+The resulting dependence is shown with open circles in the following plot.
+We also explore the dependence on the number of folds in the cross validation (*cv*)
+method. Open triangle, open circle and plus shape corresponds to the accuracy of the algorithm 
+using $5$, $10$ and $15$ folds, respectively.
+We see that the accuracy using $5$ folds is lower, but increases with the 
+choice of $10$ and $15$ folds;
+there is almost no difference between choosing $10$ or $15$ folds, 
+the algorithm accuracy reaches about $99\%$ for $300$ trees,
+and we stick to the default $10$ fold method for the rest of our calculations.
+```{r, echo=FALSE, results='hide'}
+ntrees <- c( 20, 30, 40, 50, 60, 70, 80, 90, 100, 130, 150, 200, 250, 300, 350, 400, 450, 500,
+             300, 300 )
+accuracy <- c( 0.9872627, 0.9888751, 0.9896407, 0.9891303, 0.9888760, 0.9898940, 0.9892995, 0.9889608, 
+               0.9893007, 0.9886210, 0.9901494, 0.9904908, 0.9908287, 0.9908290, 0.9904895, 0.9899814, 0.9904893, 0.9903180,
+               0.9889607, 0.9909121 )
+folds <- as.factor( c( 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10, 10,
+                       5, 15 ) )
+folds <- relevel(folds, ref = "10")
+accuracyDF <- data.frame( ntrees = ntrees, accuracy = accuracy, folds = folds )
+```
+```{r, echo=FALSE}
+g <- ggplot( accuracyDF, aes( x = ntrees, y = accuracy ) )
+g + geom_point( size = 4, shape = folds ) + 
+        labs( title = "Accuracy of the random forest algorithm vs. number of trees",
+              x = "ntrees", y = "Accuracy" )
+```
+
+We run the random forest algorithm on our training data set (without any preprocessing).
+We choose $300$ trees, because this choice shows the largest accuracy of the algorithm;
+choosing a larger number of trees results in longer computational times and possibly in
+overfitting (the accuracy slightly decreases).
+We choose the train control method to be *cross validation*.
+The cross validation runs on our training set only. Internally, the training set is split into
+a new training and test set, the random forest model is built on the training set and evaluated on the
+test set; this process is then repeated and errors are averaged.
+The model is presented below. 
+The out-of-bag (OOB) estimate of error rate is $0.95\%$
+and the most important variable is *roll_belt*.
+```{r, cache=TRUE}
+ctrCV <- trainControl( method = "cv" )
+modelFit_rf <- train( classe ~ . , method = "rf", data = training, prox = FALSE, ntree = 300, trControl = ctrCV )
+modelFit_rf$finalModel
+varImp( modelFit_rf )
+```
+
+## Predictions and Out-of-Sample Error
+
+We run our random forest model on the testing set. The predicted values of variable *classe* are stored
+in a new factor variable *predictions*.
+We create a confusion matrix where we compare our predictions with the actual classe values of the testing set.
+```{r}
+predictions <- predict( modelFit_rf, newdata = testing )
+head( predictions )
+cM <- confusionMatrix( predictions, testing$classe )
+cM
+```
+We find that the accuracy of our machine learning algorithm on the testing set is about `r round(cM$overall[[1]]*100,2)`$\%$.
+Both sensitivity and specificity of the model are more than $98\%$.
+The expected out of sample error is the proportion of missed predictions to the total number of observations in the test set
+and is equal to $1-Accuracy$, about `r round((1-cM$overall[[1]])*100,2)`$\%$.
+The out-of-bag (or out of sample) estimate based on the internal cross-validation during the run of the random forest algorithm
+is stated above and is about $0.95\%$.
+Notice that in random forests, there is no need for cross-validation or a separate test set to get an unbiased estimate 
+of the test set error. It is estimated internally, during the run.
+(For more information, see *https://www.stat.berkeley.edu/~breiman/RandomForests/cc_home.htm#ooberr*.)
+
+
+## Appendix
+
+**A. Left-out Variables During Preprocessing**  
+We see that the number of NAs is more than $19200$ in the variables that were not selected in our model.
+This corresponds to more than `r round(19200*100/dim(pmlDF)[1])` percent of missing values in each such variable.
+```{r}
+summary(pmlDF[,setdiff(names(pmlDF), names(pmlDF_select))])
+```
+
+**B. Correlations Between the Classe and Selected Non-Accelerator Variables**
+```{r}
+cor ( as.numeric(small_pml$classe), small_pml$raw_timestamp_part_1 )
+cor ( as.numeric(small_pml$classe), small_pml$raw_timestamp_part_2 )
+cor ( as.numeric(small_pml$classe), as.numeric(small_pml$new_window) )
+cor ( as.numeric(small_pml$classe), as.numeric(small_pml$num_window) )
+```
+
+
+**C. Test Model - Decision Tree**  
+
+**(i) Preprocessing with PCA**
+```{r, cache=TRUE}
+preProc_PCA <- preProcess( training[,-53], method = "pca" )
+preProc_PCA
+train_PCA <- predict ( preProc_PCA, training[,-53] )
+```
+
+**(ii) Predictive Model**  
+```{r,cache=TRUE}
+modelFit_rpart <- train( classe ~ . , method = "rpart", data = training )
+modelFit_rpart
+print( modelFit_rpart$finalModel )
+modelFit_rpart_PCA <- train( training$classe ~ . , method = "rpart", data = train_PCA )
+modelFit_rpart_PCA
+print( modelFit_rpart_PCA$finalModel )
+```
+
